@@ -75,6 +75,7 @@ async function readFileContent(file) {
   const nameEl = document.getElementById('fileNameDisplay');
   const contentTextarea = document.getElementById('ataContent');
   const titleInput = document.getElementById('ataTitle');
+  const dateInput = document.getElementById('ataDate');
 
   if (statusEl && nameEl) {
     nameEl.textContent = `${file.name} (${(file.size / 1024).toFixed(1)} KB)`;
@@ -82,7 +83,7 @@ async function readFileContent(file) {
     statusEl.classList.remove('hidden');
   }
 
-  // Preencher título se vazio
+  // Preencher título sugerido a partir do nome do arquivo
   if (titleInput && (!titleInput.value || titleInput.value.trim() === '')) {
     const cleanName = file.name.replace(/\.[^/.]+$/, "").replace(/[-_]/g, ' ');
     titleInput.value = cleanName.charAt(0).toUpperCase() + cleanName.slice(1);
@@ -93,32 +94,63 @@ async function readFileContent(file) {
   // 1. Processamento de PDF
   if (fileNameLower.endsWith('.pdf') || file.type === 'application/pdf') {
     if (contentTextarea) {
-      contentTextarea.value = "Extraindo texto do PDF, aguarde alguns instantes...";
+      contentTextarea.value = "Lendo e interpretando documento PDF...";
     }
 
     try {
       if (typeof window.pdfjsLib === 'undefined') {
-        throw new Error("Biblioteca de PDF não carregou. Verifique sua conexão ou cole o texto diretamente.");
+        throw new Error("Biblioteca de PDF não carregou.");
       }
 
-      // Configurar worker do PDF.js
-      window.pdfjsLib.GlobalWorkerOptions.workerSrc = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/2.16.105/pdf.worker.min.js';
+      // Configurar worker
+      if (window.pdfjsLib.GlobalWorkerOptions) {
+        window.pdfjsLib.GlobalWorkerOptions.workerSrc = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/2.16.105/pdf.worker.min.js';
+      }
 
       const arrayBuffer = await file.arrayBuffer();
       const typedArray = new Uint8Array(arrayBuffer);
-      const loadingTask = window.pdfjsLib.getDocument({ data: typedArray });
+      const loadingTask = window.pdfjsLib.getDocument({
+        data: typedArray,
+        useSystemFonts: true,
+        disableFontFace: true
+      });
+      
       const pdf = await loadingTask.promise;
-
       let extractedPages = [];
-      const totalPages = Math.min(pdf.numPages, 30); // Limite de segurança de 30 páginas para evitar travamentos
+      const totalPages = Math.min(pdf.numPages, 40);
 
       for (let i = 1; i <= totalPages; i++) {
         const page = await pdf.getPage(i);
         const textContent = await page.getTextContent();
-        const pageText = textContent.items
-          .map(item => item.str)
-          .join(' ')
-          .replace(/\s+/g, ' ');
+        
+        // Reconstruir linhas preservando quebras de linha pela posição vertical Y
+        let lastY = null;
+        let pageLines = [];
+        let currentLine = '';
+
+        for (const item of textContent.items) {
+          const itemY = item.transform ? item.transform[5] : null;
+          const itemStr = item.str;
+
+          if (lastY !== null && itemY !== null && Math.abs(itemY - lastY) > 4) {
+            if (currentLine.trim()) {
+              pageLines.push(currentLine.trim());
+            }
+            currentLine = itemStr;
+          } else {
+            if (currentLine.length > 0 && !currentLine.endsWith(' ') && !itemStr.startsWith(' ')) {
+              currentLine += ' ';
+            }
+            currentLine += itemStr;
+          }
+          lastY = itemY;
+        }
+
+        if (currentLine.trim()) {
+          pageLines.push(currentLine.trim());
+        }
+
+        const pageText = pageLines.join('\n');
         if (pageText.trim()) {
           extractedPages.push(pageText.trim());
         }
@@ -126,31 +158,37 @@ async function readFileContent(file) {
 
       const fullText = extractedPages.join('\n\n');
 
-      if (contentTextarea) {
-        if (fullText.trim().length > 10) {
-          contentTextarea.value = fullText;
-          if (statusEl && nameEl) {
-            statusEl.className = 'text-xs font-bold text-emerald-700 bg-emerald-100 px-3 py-1 rounded-full flex items-center gap-1.5';
-            nameEl.textContent = `${file.name} - Texto extraído com sucesso (${totalPages} pág.)`;
-          }
-        } else {
+      if (fullText.trim().length > 10) {
+        if (contentTextarea) contentTextarea.value = fullText;
+        if (statusEl && nameEl) {
+          statusEl.className = 'text-xs font-bold text-emerald-700 bg-emerald-100 px-3 py-1 rounded-full flex items-center gap-1.5';
+          nameEl.textContent = `${file.name} - Texto extraído com sucesso (${totalPages} pág.)`;
+        }
+
+        // Tentar detectar data no texto
+        autoDetectDateAndTitle(fullText, file.name);
+
+        // Auto-interpretar e já mostrar a pré-visualização com 15 dias padrão
+        autoTriggerInterpretation();
+      } else {
+        if (contentTextarea) {
           contentTextarea.value = "";
-          contentTextarea.placeholder = "Aviso: Este PDF parece ser uma imagem ou escaneamento sem camada de texto selecionável. Por favor, digite ou cole o texto da ata aqui.";
-          if (statusEl && nameEl) {
-            statusEl.className = 'text-xs font-bold text-amber-700 bg-amber-100 px-3 py-1 rounded-full flex items-center gap-1.5';
-            nameEl.textContent = `${file.name} (PDF em imagem - digite ou cole o texto)`;
-          }
+          contentTextarea.placeholder = "Aviso: Este PDF parece ser escaneado como imagem. Digite ou cole o texto da ata aqui...";
+        }
+        if (statusEl && nameEl) {
+          statusEl.className = 'text-xs font-bold text-amber-700 bg-amber-100 px-3 py-1 rounded-full flex items-center gap-1.5';
+          nameEl.textContent = `${file.name} (PDF em imagem - digite ou cole o texto abaixo)`;
         }
       }
     } catch (err) {
       console.error("Erro ao ler PDF:", err);
       if (contentTextarea) {
         contentTextarea.value = "";
-        contentTextarea.placeholder = "Não foi possível extrair o texto automaticamente deste PDF. Por favor, copie e cole o texto da ata aqui...";
+        contentTextarea.placeholder = "Por favor, copie e cole o texto da ata aqui no campo abaixo...";
       }
       if (statusEl && nameEl) {
         statusEl.className = 'text-xs font-bold text-amber-700 bg-amber-100 px-3 py-1 rounded-full flex items-center gap-1.5';
-        nameEl.textContent = `${file.name} (Copie e cole o texto no campo abaixo)`;
+        nameEl.textContent = `${file.name} (Cole o texto no campo abaixo)`;
       }
     }
     return;
@@ -159,54 +197,114 @@ async function readFileContent(file) {
   // 2. Processamento de DOCX (Word)
   if (fileNameLower.endsWith('.docx')) {
     if (contentTextarea) {
-      contentTextarea.value = "Extraindo texto do documento Word...";
+      contentTextarea.value = "Extraindo texto do Word...";
     }
     try {
-      if (typeof window.mammoth === 'undefined') {
-        throw new Error("Biblioteca DOCX indisponível.");
-      }
       const arrayBuffer = await file.arrayBuffer();
       const result = await window.mammoth.extractRawText({ arrayBuffer });
+      const fullText = result.value.trim();
       if (contentTextarea) {
-        contentTextarea.value = result.value.trim();
+        contentTextarea.value = fullText;
         if (statusEl && nameEl) {
           statusEl.className = 'text-xs font-bold text-emerald-700 bg-emerald-100 px-3 py-1 rounded-full flex items-center gap-1.5';
           nameEl.textContent = `${file.name} - Texto extraído com sucesso`;
         }
+        autoDetectDateAndTitle(fullText, file.name);
+        autoTriggerInterpretation();
       }
     } catch (err) {
       console.error("Erro ao ler DOCX:", err);
-      if (contentTextarea) {
-        contentTextarea.value = "";
-        contentTextarea.placeholder = "Por favor, copie e cole o texto da ata aqui...";
-      }
     }
     return;
   }
 
-  // 3. Arquivos de texto (.txt, .md, .csv, etc.)
+  // 3. Arquivos de texto (.txt, .md, .csv)
   const reader = new FileReader();
   reader.onload = function(event) {
     const content = event.target?.result;
     if (typeof content === 'string' && contentTextarea) {
-      // Checar se não é lixo binário
-      if (content.includes('\u0000') || (content.match(/[\uFFFD]/g) || []).length > 5) {
-        contentTextarea.value = "";
-        contentTextarea.placeholder = "Arquivo em formato não reconhecido. Por favor, cole o texto da ata diretamente aqui.";
-        if (statusEl && nameEl) {
-          statusEl.className = 'text-xs font-bold text-amber-700 bg-amber-100 px-3 py-1 rounded-full flex items-center gap-1.5';
-          nameEl.textContent = `${file.name} (Formato não reconhecido)`;
-        }
-      } else {
-        contentTextarea.value = content;
-        if (statusEl && nameEl) {
-          statusEl.className = 'text-xs font-bold text-emerald-700 bg-emerald-100 px-3 py-1 rounded-full flex items-center gap-1.5';
-          nameEl.textContent = `${file.name} - Carregado com sucesso`;
-        }
+      contentTextarea.value = content;
+      if (statusEl && nameEl) {
+        statusEl.className = 'text-xs font-bold text-emerald-700 bg-emerald-100 px-3 py-1 rounded-full flex items-center gap-1.5';
+        nameEl.textContent = `${file.name} - Carregado com sucesso`;
       }
+      autoDetectDateAndTitle(content, file.name);
+      autoTriggerInterpretation();
     }
   };
   reader.readAsText(file, 'UTF-8');
+}
+
+// Tentar identificar data no texto da ata
+function autoDetectDateAndTitle(text, fileName) {
+  const dateInput = document.getElementById('ataDate');
+  const titleInput = document.getElementById('ataTitle');
+
+  // Buscar datas no formato DD/MM/AAAA ou DD de Mês de AAAA
+  const dateMatch1 = text.match(/(\d{1,2})[\/\.-](\d{1,2})[\/\.-](\d{4})/);
+  if (dateMatch1 && dateInput) {
+    const day = dateMatch1[1].padStart(2, '0');
+    const month = dateMatch1[2].padStart(2, '0');
+    const year = dateMatch1[3];
+    dateInput.value = `${year}-${month}-${day}`;
+  } else {
+    // Ex: 22 de agosto de 2026
+    const months = {
+      'janeiro': '01', 'fevereiro': '02', 'março': '03', 'marco': '03', 'abril': '04',
+      'maio': '05', 'junho': '06', 'julho': '07', 'agosto': '08',
+      'setembro': '09', 'outubro': '10', 'novembro': '11', 'dezembro': '12'
+    };
+    const dateMatch2 = text.match(/(\d{1,2})\s+de\s+([a-zA-Zç]+)\s+de\s+(\d{4})/i);
+    if (dateMatch2 && dateInput) {
+      const day = dateMatch2[1].padStart(2, '0');
+      const mName = dateMatch2[2].toLowerCase();
+      const month = months[mName] || '01';
+      const year = dateMatch2[3];
+      dateInput.value = `${year}-${month}-${day}`;
+    }
+  }
+
+  // Se o título for genérico ou vazio, criar um título contextual
+  if (titleInput && (!titleInput.value || titleInput.value.includes('Ata') || titleInput.value.trim() === '')) {
+    if (dateInput && dateInput.value) {
+      const parts = dateInput.value.split('-');
+      titleInput.value = `Ata de Reunião - ${parts[2]}/${parts[1]}/${parts[0]}`;
+    }
+  }
+}
+
+// Auto-disparar interpretação para abrir a tabela de prazos imediatamente
+function autoTriggerInterpretation() {
+  setTimeout(() => {
+    const titleInput = document.getElementById('ataTitle');
+    const dateInput = document.getElementById('ataDate');
+    const contentTextarea = document.getElementById('ataContent');
+
+    if (!contentTextarea || !contentTextarea.value.trim()) return;
+
+    const title = (titleInput && titleInput.value.trim()) || "Ata de Reunião";
+    const date = (dateInput && dateInput.value) || new Date().toISOString().split('T')[0];
+    const content = contentTextarea.value.trim();
+
+    const ataId = 'ata_' + Date.now();
+    currentPreviewAta = {
+      id: ataId,
+      title,
+      date,
+      location: '',
+      content,
+      createdAt: new Date().toISOString()
+    };
+
+    currentPreviewDecisions = extractDecisionsFromText(content, title, ataId, date);
+
+    const previewSection = document.getElementById('previewSection');
+    if (previewSection) {
+      previewSection.classList.remove('hidden');
+      renderPreviewTable();
+      previewSection.scrollIntoView({ behavior: 'smooth' });
+    }
+  }, 100);
 }
 
 // Alternar abas de navegação
@@ -661,90 +759,156 @@ function confirmSaveAta() {
   alert(`Ata "${currentPreviewAta.title}" e suas ${currentPreviewDecisions.length} deliberações foram cadastradas com sucesso!`);
 }
 
-// Interpretador de deliberações e prazos em 3 tipos:
+// Interpretador aprimorado de deliberações e prazos em 3 tipos:
 // 1. "Atribuição de acompanhamento" (sem prazo explícito -> 15 dias padrão)
 // 2. "Decisão permanente de procedimento" (regras, sem prazo)
 // 3. "Ação com prazo" (prazo explícito em dias ou data)
 function extractDecisionsFromText(text, ataTitle, ataId, baseDateStr) {
-  const lines = text.split('\n').map(l => l.trim()).filter(l => l.length > 3);
+  if (!text || typeof text !== 'string') return [];
+
+  // Normalizar quebras de linha e tentar segmentar por itens numerados se estiver tudo em texto corrido
+  let rawText = text.replace(/\r\n/g, '\n').replace(/\r/g, '\n');
+  
+  // Se contiver números como " 1 - " ou " 1. " ou " 2) " no meio de frases sem quebra de linha, inserir quebra
+  rawText = rawText.replace(/(\s+)(?=\d+[\.\-\)]\s+[A-ZÀ-Ú])/g, '\n');
+  rawText = rawText.replace(/(\s+)(?=[•\-\*]\s+[A-ZÀ-Ú])/g, '\n');
+
+  // Quebrar por linhas
+  const rawLines = rawText.split('\n').map(l => l.trim()).filter(l => l.length > 2);
+  
+  // Agrupar linhas que pertençam a tópicos ou itens de ata
+  const candidateItems = [];
+  let currentBlock = "";
+
+  rawLines.forEach(line => {
+    const isHeaderOnly = /^(ata\s+da\s+reunião|reunião\s+ordinária|local:|horário:|data:|presentes:|participantes:|ordem\s+do\s+dia:?)$/i.test(line);
+    if (isHeaderOnly) return;
+
+    const isNewItem = /^(\d+[\.\-\)]|[a-zA-Z][\.\)]|•|\-|\*|Item\s+\d+|Assunto\s+\d+|Pauta\s+\d+)/i.test(line);
+
+    if (isNewItem) {
+      if (currentBlock.trim().length > 5) {
+        candidateItems.push(currentBlock.trim());
+      }
+      currentBlock = line;
+    } else {
+      if (currentBlock.length > 0) {
+        currentBlock += " " + line;
+      } else {
+        currentBlock = line;
+      }
+    }
+  });
+
+  if (currentBlock.trim().length > 5) {
+    candidateItems.push(currentBlock.trim());
+  }
+
+  // Se não encontrou blocos por marcadores, usar as próprias linhas com mais de 10 caracteres
+  const finalItems = candidateItems.length > 0 ? candidateItems : rawLines.filter(l => l.length > 10);
+
   const results = [];
   const baseDate = new Date(baseDateStr || new Date());
 
-  lines.forEach((line, index) => {
-    let responsible = "Comissão / Geral";
-    let action = line;
-    let daysToAdd = 15; // Padrão 15 dias para atribuições
+  finalItems.forEach((itemText, index) => {
+    // Ignorar linhas puramente de cabeçalho
+    if (/^(ata\s+da\s+reunião|pauta:|participantes:|presentes:)/i.test(itemText) && itemText.length < 50) {
+      return;
+    }
+
+    let responsible = "Comissão / Designados";
+    let action = itemText;
+    let daysToAdd = 15; // PADRÃO DE 15 DIAS PARA ATRIBUIÇÕES SEM PRAZO EXPLÍCITO
     let decisionType = "FOLLOW_UP_ASSIGNMENT";
     let typeLabel = "Atribuição de acompanhamento";
 
     // 1. Verificar se é Decisão permanente de procedimento
-    const isPermanent = line.toLowerCase().includes('sempre') ||
-                        line.toLowerCase().includes('regra') ||
-                        line.toLowerCase().includes('procedimento') ||
-                        line.toLowerCase().includes('diretriz') ||
-                        line.toLowerCase().includes('permanente') ||
-                        line.toLowerCase().includes('passa a valer') ||
-                        line.toLowerCase().includes('relembrou ao corpo');
+    const isPermanent = itemText.toLowerCase().includes('sempre') ||
+                        itemText.toLowerCase().includes('regra permanente') ||
+                        itemText.toLowerCase().includes('procedimento') ||
+                        itemText.toLowerCase().includes('diretriz') ||
+                        itemText.toLowerCase().includes('permanente') ||
+                        itemText.toLowerCase().includes('passa a valer') ||
+                        itemText.toLowerCase().includes('relembrou ao corpo') ||
+                        itemText.toLowerCase().includes('fica definido como padrão');
 
     if (isPermanent) {
       decisionType = "PERMANENT_PROCEDURE";
       typeLabel = "Decisão permanente de procedimento";
-      daysToAdd = 3650; // Não expira
+      daysToAdd = 3650; // Não expira / Regra permanente
     }
 
-    // 2. Extrair responsáveis
-    const colonMatch = line.match(/^([A-Za-zÀ-ÖØ-öø-ÿ\s,]+):\s*(.*)$/);
-    if (colonMatch) {
-      responsible = colonMatch[1].trim();
-      action = colonMatch[2].trim();
+    // 2. Extrair Responsáveis
+    // Formato 1: Nome entre parênteses no final ou meio: "(Edvaldo e Reginaldo)" ou "(Paulo, Milton)"
+    const parenMatch = itemText.match(/\((([A-ZÀ-Ú][a-zà-ú]+(?:\s+[A-ZÀ-Ú][a-zà-ú]+)?)(?:\s*(?:,|e|&)\s*([A-ZÀ-Ú][a-zà-ú]+(?:\s+[A-ZÀ-Ú][a-zà-ú]+)?))*)\)/);
+    if (parenMatch && parenMatch[1] && !parenMatch[1].toLowerCase().includes('dias')) {
+      responsible = parenMatch[1].replace(/\s+e\s+/g, ', ').trim();
     } else {
-      const respMatch = line.match(/([A-Z][a-zà-ÿ]+(?:\s*,\s*[A-Z][a-zà-ÿ]+|\s+e\s+[A-Z][a-zà-ÿ]+)?)\s+(vai falar|vai conversar|falará|conversará|foram designados|ficou responsável|vai entregar|irá|deve|apresentará)/i);
-      if (respMatch) {
-        responsible = respMatch[1].trim();
-      }
-    }
-
-    // Se a linha mencionar expressamente nomes como Edvaldo, Reginaldo, Paulo, Milton, etc.
-    if (responsible === "Comissão / Geral") {
-      const knownCheck = ["Edvaldo, Reginaldo", "Edvaldo e Reginaldo", "Paulo e Milton", "Paulo Freitas, José Milton", "Leandro e Leonardo", "Leandro Silva, Leonardo dos Santos"];
-      for (const k of knownCheck) {
-        if (line.includes(k)) {
-          responsible = k.replace(' e ', ', ');
-          break;
+      // Formato 2: "Responsável: Fulano" ou "Designados: Fulano e Beltrano"
+      const prefixMatch = itemText.match(/(?:responsáveis?|designados?|encarregados?|atribuído\s+a):\s*([A-ZÀ-Ú][a-zà-ú\s,e]+)/i);
+      if (prefixMatch) {
+        responsible = prefixMatch[1].replace(/\s+e\s+/g, ', ').trim();
+      } else {
+        // Formato 3: "Fulano e Beltrano foram designados / ficaram responsáveis / vão falar..."
+        const verbMatch = itemText.match(/([A-ZÀ-Ú][a-zà-ú]+(?:\s+[A-ZÀ-Ú][a-zà-ú]+)?(?:\s+(?:e|,)\s+[A-ZÀ-Ú][a-zà-ú]+(?:\s+[A-ZÀ-Ú][a-zà-ú]+)?)*)\s+(?:foram designados|foram designadas|ficou responsável|ficaram responsáveis|vai falar|vão falar|irá falar|irão falar|conversará|conversarão|vai cuidar|vão cuidar|irá apresentar|apresentará|entregará)/i);
+        if (verbMatch) {
+          responsible = verbMatch[1].replace(/\s+e\s+/g, ', ').trim();
+        } else {
+          // Formato 4: Nomes conhecidos citados
+          const knownNames = [
+            "Edvaldo e Reginaldo", "Edvaldo, Reginaldo",
+            "Paulo e Milton", "Paulo, Milton", "Paulo Freitas, José Milton",
+            "Leandro e Leonardo", "Leandro, Leonardo",
+            "Carlos e Mariana", "Carlos, Mariana", "Mariana Costa", "Roberto Santos", "Roberto"
+          ];
+          for (const k of knownNames) {
+            if (itemText.includes(k)) {
+              responsible = k.replace(/\s+e\s+/g, ', ');
+              break;
+            }
+          }
         }
       }
     }
 
-    // 3. Verificar prazos explícitos
+    // 3. Verificar Prazos Explícitos
     if (!isPermanent) {
-      const daysMatch = line.match(/em\s+(\d+)\s+dias?/i);
+      const daysMatch = itemText.match(/em\s+(\d+)\s+dias?/i) || itemText.match(/prazo\s+(?:de\s+)?(\d+)\s+dias?/i);
       if (daysMatch) {
         daysToAdd = parseInt(daysMatch[1], 10);
         decisionType = "ACTION_DEADLINE";
-        typeLabel = "Ação com prazo";
-      } else if (line.toLowerCase().includes('urgente') || line.toLowerCase().includes('hoje')) {
+        typeLabel = `Ação com prazo (${daysToAdd}d)`;
+      } else if (itemText.toLowerCase().includes('urgente') || itemText.toLowerCase().includes('imediato') || itemText.toLowerCase().includes('hoje')) {
         daysToAdd = 0;
         decisionType = "ACTION_DEADLINE";
-        typeLabel = "Ação com prazo";
-      } else if (line.toLowerCase().includes('amanhã')) {
+        typeLabel = "Ação urgente (Hoje)";
+      } else if (itemText.toLowerCase().includes('amanhã')) {
         daysToAdd = 1;
         decisionType = "ACTION_DEADLINE";
-        typeLabel = "Ação com prazo";
-      } else if (line.toLowerCase().includes('7 dias') || line.toLowerCase().includes('uma semana')) {
+        typeLabel = "Ação com prazo (Amanhã)";
+      } else if (itemText.toLowerCase().includes('7 dias') || itemText.toLowerCase().includes('uma semana')) {
         daysToAdd = 7;
         decisionType = "ACTION_DEADLINE";
-        typeLabel = "Ação com prazo";
-      } else if (line.toLowerCase().includes('30 dias') || line.toLowerCase().includes('um mês')) {
+        typeLabel = "Ação com prazo (7d)";
+      } else if (itemText.toLowerCase().includes('30 dias') || itemText.toLowerCase().includes('um mês') || itemText.toLowerCase().includes('1 mês')) {
         daysToAdd = 30;
         decisionType = "ACTION_DEADLINE";
-        typeLabel = "Ação com prazo";
+        typeLabel = "Ação com prazo (30d)";
       } else {
         // Sem prazo explícito -> ATRIBUIÇÃO DE ACOMPANHAMENTO: PADRÃO 15 DIAS
         daysToAdd = 15;
         decisionType = "FOLLOW_UP_ASSIGNMENT";
-        typeLabel = "Atribuição de acompanhamento";
+        typeLabel = "Atribuição de acompanhamento (15d padrão)";
       }
     }
+
+    // Limpar prefixos numéricos do texto da ação (Ex: "1 - ", "2. ", "• ")
+    let cleanAction = action
+      .replace(/^(\d+[\.\-\)]|[a-zA-Z][\.\)]|•|\-|\*|Item\s+\d+:?|Assunto\s+\d+:?|Pauta\s+\d+:?)\s*/i, '')
+      .replace(/\s+/g, ' ')
+      .trim();
+
+    if (cleanAction.length < 5) cleanAction = action.trim();
 
     const dueDate = new Date(baseDate.getTime() + daysToAdd * 86400000).toISOString().split('T')[0];
 
@@ -752,7 +916,7 @@ function extractDecisionsFromText(text, ataTitle, ataId, baseDateStr) {
       id: 'dec_' + Date.now() + '_' + index,
       ataId,
       ataTitle,
-      action: action.replace(/^[-*•\d+–\s]+/, '').trim(),
+      action: cleanAction,
       responsible,
       dueDate,
       decisionType,
@@ -822,13 +986,21 @@ function escapeHtml(text) {
 }
 
 function loadSampleAta() {
-  document.getElementById('ataTitle').value = "Ata de Reunião - 26 de Agosto de 2026";
-  document.getElementById('ataLocation').value = "Sala de Reuniões";
-  document.getElementById('ataContent').value = 
+  const titleInput = document.getElementById('ataTitle');
+  const contentInput = document.getElementById('ataContent');
+  const dateInput = document.getElementById('ataDate');
+
+  if (titleInput) titleInput.value = "Ata de Reunião - 26 de Agosto de 2026";
+  if (dateInput) dateInput.value = new Date().toISOString().split('T')[0];
+  if (contentInput) {
+    contentInput.value = 
 `1 - Falar com o pai e o irmão de Ítalo sobre a leitura. Edvaldo e Reginaldo foram designados.
-2 - Consultar e investigar situação com os envolvidos e testemunhas (Paulo e Milton).
-3 - Leandro e Leonardo irão falar com Eduardo sobre o assunto.
+2 - Consultar testemunhas e verificar contexto com os envolvidos (Paulo e Milton).
+3 - Leandro e Leonardo irão falar com Eduardo sobre o assunto em 7 dias.
 4 - Sempre deixar que os designados cuidem dos assuntos envolvendo os publicadores (Regra Permanente).`;
+  }
+
+  autoTriggerInterpretation();
 }
 
 function seedInitialData() {
