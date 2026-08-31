@@ -392,14 +392,17 @@ function renderTasks() {
 
     // Filtro por categoria
     if (currentFilter === 'COMPLETED') return d.completed;
-    if (d.completed) return false;
-
     if (currentFilter === 'PERMANENT') return d.decisionType === 'PERMANENT_PROCEDURE';
     if (currentFilter === 'FOLLOWUP') return d.decisionType === 'FOLLOW_UP_ASSIGNMENT';
 
-    if (d.decisionType === 'PERMANENT_PROCEDURE') {
-      return currentFilter === 'ALL';
+    // Se estiver no filtro 'Todas' (ALL), exibir tanto pendentes quanto concluídas para manter a visibilidade do histórico
+    if (currentFilter === 'ALL') {
+      return true;
     }
+
+    // Para filtros estritos de alerta temporal (Vencidas / Hoje), ignorar tarefas já concluídas ou regras permanentes
+    if (d.completed) return false;
+    if (d.decisionType === 'PERMANENT_PROCEDURE') return false;
 
     const dueTime = new Date(d.dueDate).getTime();
     if (currentFilter === 'OVERDUE') return dueTime < todayMidnight;
