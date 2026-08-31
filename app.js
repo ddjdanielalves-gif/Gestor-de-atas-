@@ -70,32 +70,143 @@ function handleFileSelect(e) {
   }
 }
 
-function readFileContent(file) {
+async function readFileContent(file) {
   const statusEl = document.getElementById('fileUploadStatus');
   const nameEl = document.getElementById('fileNameDisplay');
+  const contentTextarea = document.getElementById('ataContent');
+  const titleInput = document.getElementById('ataTitle');
+
   if (statusEl && nameEl) {
     nameEl.textContent = `${file.name} (${(file.size / 1024).toFixed(1)} KB)`;
+    statusEl.className = 'text-xs font-bold text-indigo-700 bg-indigo-100 px-3 py-1 rounded-full flex items-center gap-1.5';
     statusEl.classList.remove('hidden');
   }
 
-  // Se o título estiver vazio, sugerir nome do arquivo
-  const titleInput = document.getElementById('ataTitle');
+  // Preencher título se vazio
   if (titleInput && (!titleInput.value || titleInput.value.trim() === '')) {
     const cleanName = file.name.replace(/\.[^/.]+$/, "").replace(/[-_]/g, ' ');
     titleInput.value = cleanName.charAt(0).toUpperCase() + cleanName.slice(1);
   }
 
+  const fileNameLower = file.name.toLowerCase();
+
+  // 1. Processamento de PDF
+  if (fileNameLower.endsWith('.pdf') || file.type === 'application/pdf') {
+    if (contentTextarea) {
+      contentTextarea.value = "Extraindo texto do PDF, aguarde alguns instantes...";
+    }
+
+    try {
+      if (typeof window.pdfjsLib === 'undefined') {
+        throw new Error("Biblioteca de PDF não carregou. Verifique sua conexão ou cole o texto diretamente.");
+      }
+
+      // Configurar worker do PDF.js
+      window.pdfjsLib.GlobalWorkerOptions.workerSrc = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/2.16.105/pdf.worker.min.js';
+
+      const arrayBuffer = await file.arrayBuffer();
+      const typedArray = new Uint8Array(arrayBuffer);
+      const loadingTask = window.pdfjsLib.getDocument({ data: typedArray });
+      const pdf = await loadingTask.promise;
+
+      let extractedPages = [];
+      const totalPages = Math.min(pdf.numPages, 30); // Limite de segurança de 30 páginas para evitar travamentos
+
+      for (let i = 1; i <= totalPages; i++) {
+        const page = await pdf.getPage(i);
+        const textContent = await page.getTextContent();
+        const pageText = textContent.items
+          .map(item => item.str)
+          .join(' ')
+          .replace(/\s+/g, ' ');
+        if (pageText.trim()) {
+          extractedPages.push(pageText.trim());
+        }
+      }
+
+      const fullText = extractedPages.join('\n\n');
+
+      if (contentTextarea) {
+        if (fullText.trim().length > 10) {
+          contentTextarea.value = fullText;
+          if (statusEl && nameEl) {
+            statusEl.className = 'text-xs font-bold text-emerald-700 bg-emerald-100 px-3 py-1 rounded-full flex items-center gap-1.5';
+            nameEl.textContent = `${file.name} - Texto extraído com sucesso (${totalPages} pág.)`;
+          }
+        } else {
+          contentTextarea.value = "";
+          contentTextarea.placeholder = "Aviso: Este PDF parece ser uma imagem ou escaneamento sem camada de texto selecionável. Por favor, digite ou cole o texto da ata aqui.";
+          if (statusEl && nameEl) {
+            statusEl.className = 'text-xs font-bold text-amber-700 bg-amber-100 px-3 py-1 rounded-full flex items-center gap-1.5';
+            nameEl.textContent = `${file.name} (PDF em imagem - digite ou cole o texto)`;
+          }
+        }
+      }
+    } catch (err) {
+      console.error("Erro ao ler PDF:", err);
+      if (contentTextarea) {
+        contentTextarea.value = "";
+        contentTextarea.placeholder = "Não foi possível extrair o texto automaticamente deste PDF. Por favor, copie e cole o texto da ata aqui...";
+      }
+      if (statusEl && nameEl) {
+        statusEl.className = 'text-xs font-bold text-amber-700 bg-amber-100 px-3 py-1 rounded-full flex items-center gap-1.5';
+        nameEl.textContent = `${file.name} (Copie e cole o texto no campo abaixo)`;
+      }
+    }
+    return;
+  }
+
+  // 2. Processamento de DOCX (Word)
+  if (fileNameLower.endsWith('.docx')) {
+    if (contentTextarea) {
+      contentTextarea.value = "Extraindo texto do documento Word...";
+    }
+    try {
+      if (typeof window.mammoth === 'undefined') {
+        throw new Error("Biblioteca DOCX indisponível.");
+      }
+      const arrayBuffer = await file.arrayBuffer();
+      const result = await window.mammoth.extractRawText({ arrayBuffer });
+      if (contentTextarea) {
+        contentTextarea.value = result.value.trim();
+        if (statusEl && nameEl) {
+          statusEl.className = 'text-xs font-bold text-emerald-700 bg-emerald-100 px-3 py-1 rounded-full flex items-center gap-1.5';
+          nameEl.textContent = `${file.name} - Texto extraído com sucesso`;
+        }
+      }
+    } catch (err) {
+      console.error("Erro ao ler DOCX:", err);
+      if (contentTextarea) {
+        contentTextarea.value = "";
+        contentTextarea.placeholder = "Por favor, copie e cole o texto da ata aqui...";
+      }
+    }
+    return;
+  }
+
+  // 3. Arquivos de texto (.txt, .md, .csv, etc.)
   const reader = new FileReader();
   reader.onload = function(event) {
     const content = event.target?.result;
-    if (typeof content === 'string') {
-      const contentTextarea = document.getElementById('ataContent');
-      if (contentTextarea) {
+    if (typeof content === 'string' && contentTextarea) {
+      // Checar se não é lixo binário
+      if (content.includes('\u0000') || (content.match(/[\uFFFD]/g) || []).length > 5) {
+        contentTextarea.value = "";
+        contentTextarea.placeholder = "Arquivo em formato não reconhecido. Por favor, cole o texto da ata diretamente aqui.";
+        if (statusEl && nameEl) {
+          statusEl.className = 'text-xs font-bold text-amber-700 bg-amber-100 px-3 py-1 rounded-full flex items-center gap-1.5';
+          nameEl.textContent = `${file.name} (Formato não reconhecido)`;
+        }
+      } else {
         contentTextarea.value = content;
+        if (statusEl && nameEl) {
+          statusEl.className = 'text-xs font-bold text-emerald-700 bg-emerald-100 px-3 py-1 rounded-full flex items-center gap-1.5';
+          nameEl.textContent = `${file.name} - Carregado com sucesso`;
+        }
       }
     }
   };
-  reader.readAsText(file);
+  reader.readAsText(file, 'UTF-8');
 }
 
 // Alternar abas de navegação
