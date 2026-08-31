@@ -1,0 +1,31 @@
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="108dp"
+    android:height="108dp"
+    android:viewportWidth="108"
+    android:viewportHeight="108">
+    <!-- Document Base -->
+    <path
+        android:fillColor="#FFFFFF"
+        android:pathData="M34,26 C31.8,26 30,27.8 30,30 L30,78 C30,80.2 31.8,82 34,82 L74,82 C76.2,82 78,80.2 78,78 L78,38 L66,26 L34,26 Z" />
+    <!-- Document Fold -->
+    <path
+        android:fillColor="#CBD5E1"
+        android:pathData="M66,26 L66,38 L78,38 Z" />
+    <!-- Checkmark & Lines -->
+    <path
+        android:fillColor="#0D9488"
+        android:pathData="M38,42 L58,42 L58,45 L38,45 Z" />
+    <path
+        android:fillColor="#1E3A8A"
+        android:pathData="M38,50 L68,50 L68,53 L38,53 Z" />
+    <path
+        android:fillColor="#1E3A8A"
+        android:pathData="M38,58 L62,58 L62,61 L38,61 Z" />
+    <!-- Clock Badge -->
+    <path
+        android:fillColor="#D97706"
+        android:pathData="M70,68 C70,61.4 64.6,56 58,56 C51.4,56 46,61.4 46,68 C46,74.6 51.4,80 58,80 C64.6,80 70,74.6 70,68 Z" />
+    <path
+        android:fillColor="#FFFFFF"
+        android:pathData="M57,61 L57,68 L62,71 L63,69.5 L58.5,66.8 L58.5,61 Z" />
+</vector>

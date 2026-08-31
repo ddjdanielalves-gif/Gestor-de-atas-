@@ -1,0 +1,6 @@
+{
+  "name": "Gestor de Atas e Prazos",
+  "description": "Recebimento e interpretação inteligente de atas de reunião, extração de decisões com responsáveis e prazos, alertas de vencimento e agenda de lembretes.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}

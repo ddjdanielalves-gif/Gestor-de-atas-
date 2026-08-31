@@ -1,0 +1,13 @@
+{
+  "name": "gestor-de-atas-web",
+  "version": "1.0.0",
+  "description": "Versão Web do Gestor de Atas e Prazos",
+  "main": "index.html",
+  "scripts": {
+    "start": "npx serve .",
+    "build": "echo 'Build Web pronto!'"
+  },
+  "keywords": ["atas", "gestao", "prazos", "reunioes"],
+  "author": "",
+  "license": "MIT"
+}
